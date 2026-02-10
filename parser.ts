@@ -40,48 +40,88 @@ function calculate_confidence(score: number | undefined) {
   return 100 - (score ? score : 0) * 100;
 }
 
-function check_for_non_food_item(product_term: String) {
+function fuzzy_match_single_term(itemsList: string[], product_term: string) {
   const options = {
     includeScore: true,
-    threshold: 1, // allow all matches
-    ignoreLocation: true, // critical for OCR
+    threshold: 0.8, // how forgiving the match is 0 = strict 1 = most forgiving
+    distance: 1, // How far apart the characters are before score is affected.
+    ignoreLocation: true, // removes preference for matches near start
     minMatchCharLength: 2,
   };
-  const fuse = new Fuse(NonFoodItems, options);
-  const searchResult = fuse.search(product_term.toLocaleLowerCase());
+  const fuse = new Fuse(itemsList, options);
+  // Given a term string
+  const normalized_term = normalize(product_term.toLocaleLowerCase());
+  const searchResult = fuse.search(normalized_term);
   if (searchResult.length === 0) {
-    return { match: "", confidence: 100 };
+    return { match: "", confidence: 0 };
   }
   const confidence = calculate_confidence(searchResult[0].score);
   return { match: searchResult[0].item, confidence: confidence };
 }
 
-function fuzzy_match_product_term(product_term: String) {
-  const options = {
-    includeScore: true,
-    threshold: 1, // allow all matches
-    ignoreLocation: true, // critical for OCR
-    minMatchCharLength: 2,
-  };
+function fuzzy_match_term_vowels_and_none(items: string[], term: string) {
+  if (!term) return { match: "undefined", confidence: 0 };
+  if (term && term.length < 3) return { match: "", confidence: 0 };
 
-  const fuse = new Fuse(GroceryItems, options);
-  const searchResult = fuse.search(product_term.toLocaleLowerCase());
-  if (searchResult.length === 0) {
-    return { match: "", confidence: 1 };
+  const devoweled_items: string[] = items.map((item) => {
+    return devowel(item);
+  });
+
+  const normal = fuzzy_match_single_term(items, normalize(term));
+  const noVowels = fuzzy_match_single_term(
+    devoweled_items,
+    devowel(normalize(term)),
+  );
+  return noVowels.confidence > normal.confidence
+    ? {
+        match: items[devoweled_items.indexOf(noVowels.match)],
+        confidence: noVowels.confidence,
+      }
+    : normal;
+}
+
+function devowel(word: string) {
+  return word.replace(/[aeiou]/g, "");
+}
+
+function normalize(word: string) {
+  return word.endsWith("es")
+    ? word.slice(0, -2)
+    : word.endsWith("s")
+      ? word.slice(0, -1)
+      : word;
+}
+
+function fuzzy_match_product_line(product_term: String, items: string[]) {
+  // split the string
+  const terms = product_term.split(/\s+/);
+  // Start with the confidence of the first term
+  let highest_confidence_match = fuzzy_match_term_vowels_and_none(
+    items,
+    terms[0],
+  );
+  // iterate and check the rest
+  for (let i = 0; i < terms.length; i++) {
+    const term_match = fuzzy_match_term_vowels_and_none(items, terms[i]);
+    if (term_match.confidence > highest_confidence_match.confidence)
+      highest_confidence_match = term_match;
   }
-  const confidence = calculate_confidence(searchResult[0].score);
-  return { match: searchResult[0].item, confidence: confidence };
+  return highest_confidence_match;
 }
 
 function find_grocery_item(reciept_line: String) {
   const potential_term = get_potential_term(reciept_line);
-  const non_food_match = check_for_non_food_item(potential_term);
-  const match = fuzzy_match_product_term(potential_term);
+  const non_food_match = fuzzy_match_product_line(potential_term, NonFoodItems);
+  const match = fuzzy_match_product_line(potential_term, GroceryItems);
   return { non_food_match: non_food_match, food_match: match };
 }
 
 function determine_if_food(non_food_match: Match, food_match: Match) {
-  return non_food_match.confidence < food_match.confidence;
+  console.log(
+    "non: " + non_food_match.confidence + "\t food: " + food_match.confidence,
+  );
+  console.log("non: " + non_food_match.match + "\t food: " + food_match.match);
+  return non_food_match.confidence <= food_match.confidence;
 }
 
 function process_text(reciept_line: String) {
@@ -96,14 +136,16 @@ function process_text(reciept_line: String) {
     );
   } else {
     console.log(
-      "This is not a food item, confidence " +
+      "This is not a food item (matched with " +
+        non_food_match.match +
+        "), confidence " +
         non_food_match.confidence.toFixed(2) +
         "%",
     );
   }
 }
 
-// Body
+// 80% = high confidence
 
 // for (const test_string of InglesReceipt) {
 for (const test_string of FoodLionReceipt) {

@@ -65,10 +65,15 @@ export const GroceryItems: string[] = [
   "coffee beans",
   "grape",
   "grapes",
+  "cucumber",
+  "pommegranite",
 ];
 
 export const NonFoodItems: string[] = [
   "savings",
+  "grocery",
+  "produce",
+  "frozen",
   "toilet paper",
   "toilet tissue",
   "bath tissue",
